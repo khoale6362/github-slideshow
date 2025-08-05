@@ -1,0 +1,527 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quản lý nghỉ phép</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body className="bg-gray-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    function LeaveRequestApp() {
+      const [requests, setRequests] = React.useState([]);
+      const [employees, setEmployees] = React.useState([]);
+      const [formData, setFormData] = React.useState({
+        name: '',
+        startDate: '',
+        endDate: '',
+        reason: '',
+        email: ''
+      });
+      const [newEmployee, setNewEmployee] = React.useState({
+        name: '',
+        totalLeaveDays: 12,
+        email: ''
+      });
+      const [editEmployee, setEditEmployee] = React.useState(null);
+      const [isAdmin, setIsAdmin] = React.useState(false);
+      const [adminPassword, setAdminPassword] = React.useState('');
+      const [message, setMessage] = React.useState(null);
+
+      // Hàm hiển thị thông báo
+      const showMessage = (text, type = 'error') => {
+        setMessage({ text, type });
+        setTimeout(() => setMessage(null), 5000); // Tự động ẩn sau 5 giây
+      };
+
+      // Load data from localStorage when component mounts
+      React.useEffect(() => {
+        const savedAdminStatus = localStorage.getItem('isAdmin');
+        if (savedAdminStatus === 'true') {
+          setIsAdmin(true);
+        }
+        const savedEmployees = JSON.parse(localStorage.getItem('employees')) || [
+          { name: 'Nguyễn Văn A', totalLeaveDays: 12, remainingLeaveDays: 12, email: 'nguyenvana@example.com' },
+          { name: 'Trần Thị B', totalLeaveDays: 12, remainingLeaveDays: 12, email: 'tranthib@example.com' }
+        ];
+        const savedRequests = JSON.parse(localStorage.getItem('requests')) || [];
+        setEmployees(savedEmployees);
+        setRequests(savedRequests);
+      }, []);
+
+      // Save employees and requests to localStorage
+      React.useEffect(() => {
+        localStorage.setItem('employees', JSON.stringify(employees));
+        localStorage.setItem('requests', JSON.stringify(requests));
+        localStorage.setItem('isAdmin', isAdmin);
+      }, [employees, requests, isAdmin]);
+
+      const handleInputChange = (e) => {
+        setFormData({ ...formData, [e.target.name]: e.target.value });
+      };
+
+      const handleEmployeeInputChange = (e) => {
+        setNewEmployee({ ...newEmployee, [e.target.name]: e.target.value });
+      };
+
+      const handleEditEmployeeChange = (e) => {
+        setEditEmployee({ ...editEmployee, [e.target.name]: e.target.value });
+      };
+
+      const handleAdminLogin = (e) => {
+        e.preventDefault();
+        if (adminPassword === 'admin123') {
+          setIsAdmin(true);
+          setAdminPassword('');
+          showMessage('Đăng nhập quản lý thành công', 'success');
+        } else {
+          showMessage('Mật khẩu quản lý không đúng!', 'error');
+        }
+      };
+
+      const handleLogout = () => {
+        setIsAdmin(false);
+        showMessage('Đã đăng xuất', 'success');
+      };
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (!formData.name || !formData.email || !formData.startDate || !formData.endDate || !formData.reason) {
+          showMessage('Vui lòng điền đầy đủ thông tin yêu cầu', 'error');
+          return;
+        }
+        const leaveDays = Math.ceil((new Date(formData.endDate) - new Date(formData.startDate)) / (1000 * 60 * 60 * 24)) + 1;
+        const employee = employees.find(emp => emp.name === formData.name);
+        if (!employee || employee.remainingLeaveDays < leaveDays) {
+          showMessage('Nhân viên không hợp lệ hoặc không đủ ngày phép', 'error');
+          return;
+        }
+        const newRequest = {
+          id: Date.now(),
+          name: formData.name,
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          reason: formData.reason,
+          status: 'Đang chờ duyệt',
+          createdAt: new Date().toLocaleDateString('vi-VN'),
+          leaveDays,
+          email: formData.email
+        };
+        setRequests([...requests, newRequest]);
+        setEmployees(employees.map(emp =>
+          emp.name === formData.name
+            ? { ...emp, remainingLeaveDays: emp.remainingLeaveDays - leaveDays }
+            : emp
+        ));
+        setFormData({ name: '', startDate: '', endDate: '', reason: '', email: '' });
+        showMessage('Yêu cầu nghỉ phép đã được gửi', 'success');
+      };
+
+      const handleAddEmployee = (e) => {
+        e.preventDefault();
+        if (!newEmployee.name || !newEmployee.email) {
+          showMessage('Vui lòng điền đầy đủ tên và email của nhân viên', 'error');
+          return;
+        }
+        if (employees.find(emp => emp.name === newEmployee.name)) {
+          showMessage('Nhân viên đã tồn tại', 'error');
+          return;
+        }
+        const newEmp = {
+          name: newEmployee.name,
+          totalLeaveDays: parseInt(newEmployee.totalLeaveDays) || 12,
+          remainingLeaveDays: parseInt(newEmployee.totalLeaveDays) || 12,
+          email: newEmployee.email
+        };
+        setEmployees([...employees, newEmp]);
+        setNewEmployee({ name: '', totalLeaveDays: 12, email: '' });
+        showMessage('Thêm nhân viên thành công', 'success');
+      };
+
+      const handleEditEmployee = (employee) => {
+        setEditEmployee({
+          name: employee.name,
+          totalLeaveDays: employee.totalLeaveDays,
+          email: employee.email,
+          originalName: employee.name
+        });
+      };
+
+      const handleUpdateEmployee = (e) => {
+        e.preventDefault();
+        if (!editEmployee.name || !editEmployee.email) {
+          showMessage('Vui lòng điền đầy đủ tên và email của nhân viên', 'error');
+          return;
+        }
+        if (editEmployee.name !== editEmployee.originalName && employees.find(emp => emp.name === editEmployee.name)) {
+          showMessage('Nhân viên đã tồn tại', 'error');
+          return;
+        }
+        setEmployees(employees.map(emp =>
+          emp.name === editEmployee.originalName
+            ? {
+                ...emp,
+                name: editEmployee.name,
+                totalLeaveDays: parseInt(editEmployee.totalLeaveDays) || 12,
+                remainingLeaveDays: parseInt(editEmployee.totalLeaveDays) || emp.remainingLeaveDays,
+                email: editEmployee.email
+              }
+            : emp
+        ));
+        setEditEmployee(null);
+        showMessage('Cập nhật nhân viên thành công', 'success');
+      };
+
+      const handleDeleteEmployee = (name) => {
+        if (requests.some(req => req.name === name)) {
+          showMessage('Không thể xóa nhân viên vì họ có yêu cầu nghỉ phép đang tồn tại.', 'error');
+          return;
+        }
+        if (window.confirm(`Bạn có chắc muốn xóa nhân viên ${name}?`)) {
+          setEmployees(employees.filter(emp => emp.name !== name));
+          showMessage(`Đã xóa nhân viên ${name}`, 'success');
+        }
+      };
+
+      const handleApproveRequest = (requestId) => {
+        setRequests(requests.map(req =>
+          req.id === requestId ? { ...req, status: 'Đã duyệt' } : req
+        ));
+        showMessage('Yêu cầu đã được duyệt', 'success');
+      };
+
+      const handleRejectRequest = (requestId, employeeName, leaveDays) => {
+        setRequests(requests.map(req =>
+          req.id === requestId ? { ...req, status: 'Bị từ chối' } : req
+        ));
+        setEmployees(employees.map(emp =>
+          emp.name === employeeName ? { ...emp, remainingLeaveDays: emp.remainingLeaveDays + leaveDays } : emp
+        ));
+        showMessage('Yêu cầu đã bị từ chối', 'success');
+      };
+
+      return (
+        <div className="container mx-auto p-4 max-w-md">
+          <h1 className="text-2xl font-bold mb-4 text-center">Quản lý nghỉ phép</h1>
+
+          {/* Thông báo lỗi/thành công */}
+          {message && (
+            <div className={`p-4 mb-4 rounded-lg ${message.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+              <div className="flex justify-between items-center">
+                <p>{message.text}</p>
+                <button
+                  onClick={() => setMessage(null)}
+                  className="text-sm font-semibold"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Admin Login/Logout */}
+          {!isAdmin ? (
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+              <h2 className="text-lg font-semibold mb-3">Đăng nhập quản lý</h2>
+              <div className="space-y-4">
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="Nhập mật khẩu quản lý"
+                  className="w-full p-2 border rounded"
+                />
+                <button
+                  onClick={handleAdminLogin}
+                  className="w-full bg-purple-500 text-white p-2 rounded hover:bg-purple-600"
+                >
+                  Đăng nhập
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+              <h2 className="text-lg font-semibold mb-3">Quản lý</h2>
+              <button
+                onClick={handleLogout}
+                className="w-full bg-red-500 text-white p-2 rounded hover:bg-red-600"
+              >
+                Đăng xuất
+              </button>
+            </div>
+          )}
+
+          {/* Form thêm nhân viên (chỉ hiển thị khi là admin) */}
+          {isAdmin && (
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+              <h2 className="text-lg font-semibold mb-3">Thêm nhân viên</h2>
+              <div className="space-y-4">
+                <input
+                  type="text"
+                  name="name"
+                  value={newEmployee.name}
+                  onChange={handleEmployeeInputChange}
+                  placeholder="Họ và tên"
+                  className="w-full p-2 border rounded"
+                  required
+                />
+                <input
+                  type="number"
+                  name="totalLeaveDays"
+                  value={newEmployee.totalLeaveDays}
+                  onChange={handleEmployeeInputChange}
+                  placeholder="Số ngày phép (mặc định: 12)"
+                  className="w-full p-2 border rounded"
+                  min="0"
+                />
+                <input
+                  type="email"
+                  name="email"
+                  value={newEmployee.email}
+                  onChange={handleEmployeeInputChange}
+                  placeholder="Email"
+                  className="w-full p-2 border rounded"
+                  required
+                />
+                <button
+                  onClick={handleAddEmployee}
+                  className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                >
+                  Thêm nhân viên
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Form chỉnh sửa nhân viên (chỉ hiển thị khi là admin và đang chỉnh sửa) */}
+          {isAdmin && editEmployee && (
+            <div className="bg-white p-4 rounded-lg shadow mb-6">
+              <h2 className="text-lg font-semibold mb-3">Chỉnh sửa nhân viên</h2>
+              <div className="space-y-4">
+                <input
+                  type="text"
+                  name="name"
+                  value={editEmployee.name}
+                  onChange={handleEditEmployeeChange}
+                  placeholder="Họ và tên"
+                  className="w-full p-2 border rounded"
+                  required
+                />
+                <input
+                  type="number"
+                  name="totalLeaveDays"
+                  value={editEmployee.totalLeaveDays}
+                  onChange={handleEditEmployeeChange}
+                  placeholder="Số ngày phép"
+                  className="w-full p-2 border rounded"
+                  min="0"
+                />
+                <input
+                  type="email"
+                  name="email"
+                  value={editEmployee.email}
+                  onChange={handleEditEmployeeChange}
+                  placeholder="Email"
+                  className="w-full p-2 border rounded"
+                  required
+                />
+                <div className="flex space-x-2">
+                  <button
+                    onClick={handleUpdateEmployee}
+                    className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                  >
+                    Cập nhật
+                  </button>
+                  <button
+                    onClick={() => setEditEmployee(null)}
+                    className="w-full bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Form xin nghỉ phép */}
+          <div className="bg-white p-4 rounded-lg shadow mb-6">
+            <h2 className="text-lg font-semibold mb-3">Gửi yêu cầu nghỉ phép</h2>
+            <div className="space-y-4">
+              <select
+                name="name"
+                value={formData.name}
+                onChange={handleInputChange}
+                className="w-full p-2 border rounded"
+                required
+              >
+                <option value="">Chọn nhân viên</option>
+                {employees.map(emp => (
+                  <option key={emp.name} value={emp.name}>{emp.name}</option>
+                ))}
+              </select>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                placeholder="Email của bạn"
+                className="w-full p-2 border rounded"
+                required
+              />
+              <input
+                type="date"
+                name="startDate"
+                value={formData.startDate}
+                onChange={handleInputChange}
+                className="w-full p-2 border rounded"
+                required
+              />
+              <input
+                type="date"
+                name="endDate"
+                value={formData.endDate}
+                onChange={handleInputChange}
+                className="w-full p-2 border rounded"
+                required
+              />
+              <textarea
+                name="reason"
+                value={formData.reason}
+                onChange={handleInputChange}
+                placeholder="Lý do nghỉ"
+                className="w-full p-2 border rounded"
+                required
+              ></textarea>
+              <button
+                onClick={handleSubmit}
+                className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+              >
+                Gửi yêu cầu
+              </button>
+            </div>
+          </div>
+
+          {/* Danh sách nhân viên và số ngày phép */}
+          <div className="bg-white p-4 rounded-lg shadow mb-6">
+            <h2 className="text-lg font-semibold mb-3">Số ngày phép</h2>
+            {employees.length === 0 ? (
+              <p className="text-gray-500">Chưa có nhân viên nào.</p>
+            ) : (
+              <ul className="space-y-3">
+                {employees.map(emp => (
+                  <li key={emp.name} className="border-b pb-2">
+                    <p><strong>Họ tên:</strong> {emp.name}</p>
+                    <p><strong>Email:</strong> {emp.email}</p>
+                    <p><strong>Tổng số ngày phép:</strong> {emp.totalLeaveDays}</p>
+                    <p><strong>Ngày phép còn lại:</strong> {emp.remainingLeaveDays}</p>
+                    {isAdmin && (
+                      <div className="flex space-x-2 mt-2">
+                        <button
+                          onClick={() => handleEditEmployee(emp)}
+                          className="bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600"
+                        >
+                          Chỉnh sửa
+                        </button>
+                        <button
+                          onClick={() => handleDeleteEmployee(emp.name)}
+                          className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Danh sách yêu cầu */}
+          <div className="bg-white p-4 rounded-lg shadow">
+            <h2 className="text-lg font-semibold mb-3">Danh sách yêu cầu</h2>
+            {requests.length === 0 ? (
+              <p className="text-gray-500">Chưa có yêu cầu nào.</p>
+            ) : (
+              <ul className="space-y-3">
+                {requests.map((request) => (
+                  <li key={request.id} className="border-b pb-2">
+                    <p><strong>Họ tên:</strong> {request.name}</p>
+                    <p><strong>Email:</strong> {request.email}</p>
+                    <p><strong>Ngày bắt đầu:</strong> {request.startDate}</p>
+                    <p><strong>Ngày kết thúc:</strong> {request.endDate}</p>
+                    <p><strong>Số ngày nghỉ:</strong> {request.leaveDays}</p>
+                    <p><strong>Lý do:</strong> {request.reason}</p>
+                    <p><strong>Trạng thái:</strong> {request.status}</p>
+                    <p><strong>Ngày gửi:</strong> {request.createdAt}</p>
+                    {isAdmin && request.status === 'Đang chờ duyệt' && (
+                      <div className="flex space-x-2 mt-2">
+                        <button
+                          onClick={() => handleApproveRequest(request.id)}
+                          className="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600"
+                        >
+                          Duyệt
+                        </button>
+                        <button
+                          onClick={() => handleRejectRequest(request.id, request.name, request.leaveDays)}
+                          className="bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600"
+                        >
+                          Từ chối
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<LeaveRequestApp />, document.getElementById('root'));
+  </script>
+</body>
+</html>
